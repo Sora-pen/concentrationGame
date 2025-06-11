@@ -1,9 +1,9 @@
 package org.example.plugin.concentration.Command;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Rotation;
@@ -27,31 +27,34 @@ import org.jetbrains.annotations.NotNull;
 
 public class Concentration extends CommandBaseProcess implements Listener {
 
+  private final Main main;
+
   public Concentration(Main main) {
+    this.main = main;
   }
 
-  ArrayList<ItemFrame> itemFrames = new ArrayList<>();
-  ArrayList<Material> itemStacks = new ArrayList<>();
-  int stepNumber = 0;
+  boolean isGaming = false;
+  ArrayList<ItemFrame> itemFrames;
+  ArrayList<Material> itemStacks;
+  int selectionStep;
+  int gameTime;
   int score;
-  int firstChoiceIndex = -1;
-  int secondChoiceIndex = -1;
-  boolean isGaming =false;
+  int firstChoiceIndex;
+  int secondChoiceIndex;
 
   @Override
-  public boolean onPlayerCommandProcess(Player player, Command command, String s, String[] strings)
-      throws IOException {
-    isGaming=true;
-    score=0;
-    stepNumber=0;
-    itemFrames = new ArrayList<>();
+  public boolean onPlayerCommandProcess(Player player, Command command, String s,
+      String[] strings) {
+    isGaming = true;
+    constantsInitialization();
 
     World world = player.getWorld();
     int locationX = player.getLocation().getBlockX();
     int locationY = player.getLocation().getBlockY();
     int locationZ = player.getLocation().getBlockZ();
+    float playerDirectionYaw = player.getLocation().getYaw();
 
-    String playerDirection = getPlayerDirection(player);
+    String playerDirection = getPlayerDirection(playerDirectionYaw);
 
     if (checkPlacementSpace(player, playerDirection, world, locationX, locationY, locationZ)) {
       return false;
@@ -60,6 +63,10 @@ public class Concentration extends CommandBaseProcess implements Listener {
     spawnItemFrames(world, locationX, locationY, locationZ, playerDirection);
 
     makeItemStacksList();
+
+    player.sendMessage("ゲームスタート!額縁を右クリックしてペアを見つけよう!");
+
+    gameTimer(player);
 
     return true;
   }
@@ -75,11 +82,11 @@ public class Concentration extends CommandBaseProcess implements Listener {
     Entity entity = event.getRightClicked();
     Player player = event.getPlayer();
 
-    if (!(entity instanceof ItemFrame)) return;
+    if (!(entity instanceof ItemFrame itemFrame)) {
+      return;
+    }
 
-    ItemFrame itemFrame = (ItemFrame) entity;
-
-//    額縁に対するアイテムのセットを制限
+    //    空の額縁を選んだときにキャンセル
     if (itemFrame.getItem().getType().equals(Material.AIR)) {
       event.setCancelled(true);
       return;
@@ -87,57 +94,83 @@ public class Concentration extends CommandBaseProcess implements Listener {
 
     if (itemFrames.contains(itemFrame)) {
       int index = itemFrames.indexOf(itemFrame);
-      if (stepNumber % 2 == 0) {
-        firstChoiceProcess(index);
-      } else if (stepNumber % 2 == 1){
-        if (secondChoiceProcess(event, itemFrame, index, player)) return;
+      switch (selectionStep) {
+        case 1 -> {
+          resetItemFrames();
+          itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
+          firstChoiceIndex = index;
+          selectionStep = 2;
+        }
+        case 2 -> {
+          if (itemFrame.equals(itemFrames.get(firstChoiceIndex))) {
+            event.setCancelled(true);
+            return;
+          }
+          itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
+          secondChoiceIndex = index;
+          selectionStep = 1;
+          scoringProcess(player);
+        }
       }
     }
 
-    finishGame(player);
+    if (itemFrames.stream().allMatch(frame -> frame.getItem().getType().equals(Material.AIR))) {
+      isGaming = false;
+    }
 
     event.setCancelled(true);
   }
 
   @EventHandler
-  public void onBlockBreak(BlockBreakEvent event){
-    if(isGaming){
-      event.setCancelled(true);
-    }
-  }
-
-  @EventHandler
-  public void onHangingBreak(HangingBreakEvent event){
-    if(isGaming){
-      event.setCancelled(true);
-    }
-  }
-
-  @EventHandler
-  public void onEntityDamage(EntityDamageEvent event){
+  public void onBlockBreak(BlockBreakEvent event) {
     if (isGaming) {
       event.setCancelled(true);
     }
   }
 
   @EventHandler
-  public void onBlockPlace(BlockPlaceEvent event){
+  public void onHangingBreak(HangingBreakEvent event) {
+    if (isGaming) {
+      event.setCancelled(true);
+    }
+  }
+
+  @EventHandler
+  public void onEntityDamage(EntityDamageEvent event) {
+    if (isGaming) {
+      event.setCancelled(true);
+    }
+  }
+
+  @EventHandler
+  public void onBlockPlace(BlockPlaceEvent event) {
     if (isGaming) {
       event.setCancelled(true);
     }
   }
 
   /**
-   * コマンドを実行したプレイヤーの向いている方向をX軸とZ軸に丸めて取得する。
+   * 定数の初期化
+   */
+  private void constantsInitialization() {
+    itemFrames = new ArrayList<>();
+    itemStacks = new ArrayList<>();
+    gameTime = 60;
+    score = 0;
+    selectionStep = 1;
+    firstChoiceIndex = -1;
+    secondChoiceIndex = -1;
+  }
+
+  /**
+   * プレイヤーの向いてる方向をX,Z軸に丸めて取得する
    *
-   * @param player コマンドを実行したプレイヤー
-   * @return プレイヤーの向いている方向に対応した文字列
+   * @param playerDirectionYaw
+   * @return プレイヤーの向いてる方向をX, Z軸に丸めて返す
    */
   @NotNull
-  private static String getPlayerDirection(Player player) {
-    float playerDirectionYaw = player.getLocation().getYaw();
+  private static String getPlayerDirection(float playerDirectionYaw) {
     String playerDirection;
-
     if (playerDirectionYaw > -135 && playerDirectionYaw <= -45) {
       playerDirection = "directionPlusX";
     } else if (playerDirectionYaw > 45 && playerDirectionYaw <= 135) {
@@ -264,22 +297,38 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * プレイヤーが1つ目の額縁を選択したときに行う処理
+   * 神経衰弱ゲームのタイマー
    *
-   * @param index
+   * @param player
    */
-  private void firstChoiceProcess(int index) {
-    resetItemFrames();
-    itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
-    firstChoiceIndex = index;
-    stepNumber += 1;
+  private void gameTimer(Player player) {
+    Bukkit.getScheduler().runTaskTimer(main, Runnable -> {
+      if (gameTime >= 0 && isGaming) {
+        gameTime = gameTime - 1;
+        if (gameTime % 10 == 0) {
+          player.sendMessage("残り" + gameTime + "秒!");
+        }
+      } else {
+        Runnable.cancel();
+        isGaming = false;
+        itemFrames.forEach(Entity::remove);
+        itemFrames.clear();
+        if (gameTime > 0) {
+          player.sendTitle("ゲームクリア!",
+              "クリアタイム" + (60 - gameTime) + "秒", 10, 70, 20);
+        } else {
+          player.sendTitle("ゲームが終了しました!",
+              " 合計 " + score + "点!", 10, 70, 20);
+        }
+      }
+    }, 0, 20);
   }
 
   /**
-   * ペアが合わず残った場合、次の組の最初を選ぶときにチェストに戻す。
+   * 前回選んだ2つがペアではなかった場合、元のチェストに戻す
    */
   private void resetItemFrames() {
-    if (stepNumber >= 2
+    if (selectionStep == 2
         && !itemFrames.get(firstChoiceIndex).getItem().getType().equals(Material.AIR)
         && !itemFrames.get(secondChoiceIndex).getItem().getType().equals(Material.AIR)) {
       itemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.CHEST));
@@ -288,53 +337,18 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * プレイヤーが2つ目の額縁を選択したときに行う処理
-   * @param event
-   * @param itemFrame
-   * @param index
-   * @param player
-   * @return
-   */
-  private boolean secondChoiceProcess(PlayerInteractEntityEvent event, ItemFrame itemFrame, int index,
-      Player player) {
-    if(itemFrame.equals(itemFrames.get(firstChoiceIndex))){
-      event.setCancelled(true);
-      return true;
-    }
-    itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
-    secondChoiceIndex = index;
-    stepNumber += 1;
-    scoreingProcess(player);
-    return false;
-  }
-
-  /**
    * プレイヤーが選んだ2つの額縁のアイテムがペアであるかを判定する。
+   *
    * @param player
    */
-  private void scoreingProcess(Player player) {
+  private void scoringProcess(Player player) {
     if (itemStacks.get(firstChoiceIndex).equals(itemStacks.get(secondChoiceIndex))) {
-      score += 1;
-      player.sendMessage("当たり!現在の手数" + score + "手");
+      score += 10;
+      player.sendMessage("当たり!現在" + score + "点!");
       itemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.AIR));
       itemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.AIR));
     } else {
-      score += 1;
-      player.sendMessage("ハズレ!現在" + score + "手");
-    }
-  }
-
-  /**
-   * ペアがすべてなくなったときにゲームを終了する
-   * @param player
-   */
-  private void finishGame(Player player) {
-    if (itemFrames.stream().allMatch(frame -> frame.getItem().getType().equals(Material.AIR))) {
-      itemFrames.forEach(ItemFrame::remove);
-      itemFrames.clear();
-      player.sendTitle("ゲームが終了しました!",
-          player.getName() + " 合計 " + score + "手!", 20, 5 * 20, 20);
-      isGaming=false;
+      player.sendMessage("ハズレ!現在" + score + "点!");
     }
   }
 
