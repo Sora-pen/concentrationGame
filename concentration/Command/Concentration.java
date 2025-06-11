@@ -328,9 +328,13 @@ public class Concentration extends CommandBaseProcess implements Listener {
    * 前回選んだ2つがペアではなかった場合、元のチェストに戻す
    */
   private void resetItemFrames() {
-    if (selectionStep == 2
-        && !itemFrames.get(firstChoiceIndex).getItem().getType().equals(Material.AIR)
-        && !itemFrames.get(secondChoiceIndex).getItem().getType().equals(Material.AIR)) {
+    if (firstChoiceIndex == -1 || secondChoiceIndex == -1) {
+      return;
+    }
+
+    boolean isFirstChoiceAir = itemFrames.get(firstChoiceIndex).getItem().getType().equals(Material.AIR);
+    boolean isSecondChoiceAir = itemFrames.get(secondChoiceIndex).getItem().getType().equals(Material.AIR);
+    if (!isFirstChoiceAir && !isSecondChoiceAir) {
       itemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.CHEST));
       itemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.CHEST));
     }
