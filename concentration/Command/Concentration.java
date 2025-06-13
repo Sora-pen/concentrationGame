@@ -1,9 +1,17 @@
 package org.example.plugin.concentration.Command;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import org.apache.ibatis.io.Resources;
+import org.apache.ibatis.session.SqlSession;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Rotation;
@@ -22,9 +30,15 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.hanging.HangingBreakEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.ItemStack;
+import org.example.plugin.concentration.DateBaseMapper.PlayerScore;
+import org.example.plugin.concentration.DateBaseMapper.PlayerScoreMapper;
 import org.example.plugin.concentration.Main;
-import org.jetbrains.annotations.NotNull;
 
+/**
+ * 神経衰弱ゲームのコマンドクラス。 プレイヤーが額縁を右クリックすることでカードをめくり、ペアを見つけるゲーム。
+ * プレイヤーの向いている方向に5x4のグリッド状に額縁を設置し、それぞれにチェストをセットしてカードの裏面として使用する。
+ * 10種類のアイテムを2個ずつ用意し、ランダムに配置された額縁の中にペアとして隠す。 最終的なスコアおよび、すべてのペアを発見した際のクリアタイムを競う。
+ */
 public class Concentration extends CommandBaseProcess implements Listener {
 
   private final Main main;
@@ -33,8 +47,8 @@ public class Concentration extends CommandBaseProcess implements Listener {
     this.main = main;
   }
 
-  boolean isGaming = false;
-  ArrayList<ItemFrame> itemFrames;
+  boolean isGaming;
+  ArrayList<ItemFrame> spawnedItemFrames;
   ArrayList<Material> itemStacks;
   int selectionStep;
   int gameTime;
@@ -42,10 +56,34 @@ public class Concentration extends CommandBaseProcess implements Listener {
   int firstChoiceIndex;
   int secondChoiceIndex;
 
+  InputStream inputStream;
+
+  {
+    try {
+      inputStream = Resources.getResourceAsStream("mybatis-config.xml");
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(inputStream);
+
   @Override
   public boolean onPlayerCommandProcess(Player player, Command command, String s,
       String[] strings) {
-    isGaming = true;
+
+    boolean isArgOfListCorrect = strings.length == 1 && strings[0].equals("list");
+    if (isArgOfListCorrect) {
+      showRanking(player);
+      return true;
+    }
+
+    if (strings.length != 0) {
+      player.sendMessage(
+          ChatColor.RED + "引数が不正です。引数なし -> ゲーム開始、引数list -> ランキング確認");
+      return false;
+    }
+
     constantsInitialization();
 
     World world = player.getWorld();
@@ -64,12 +102,15 @@ public class Concentration extends CommandBaseProcess implements Listener {
 
     makeItemStacksList();
 
+    isGaming = true;
+
     player.sendMessage("ゲームスタート!額縁を右クリックしてペアを見つけよう!");
 
     gameTimer(player);
 
     return true;
   }
+
 
   @Override
   public boolean onEtcCommandProcess(CommandSender commandSender, Command command, String s,
@@ -86,35 +127,37 @@ public class Concentration extends CommandBaseProcess implements Listener {
       return;
     }
 
-    //    空の額縁を選んだときにキャンセル
-    if (itemFrame.getItem().getType().equals(Material.AIR)) {
+    boolean isItemStackAir = itemFrame.getItem().getType().equals(Material.AIR);
+    boolean isNotContainedTheItemFrames = !spawnedItemFrames.contains(itemFrame);
+    if (isItemStackAir || isNotContainedTheItemFrames) {
       event.setCancelled(true);
       return;
     }
 
-    if (itemFrames.contains(itemFrame)) {
-      int index = itemFrames.indexOf(itemFrame);
-      switch (selectionStep) {
-        case 1 -> {
-          resetItemFrames();
-          itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
-          firstChoiceIndex = index;
-          selectionStep = 2;
+    int index = spawnedItemFrames.indexOf(itemFrame);
+    switch (selectionStep) {
+      case 1 -> {
+        resetItemFrames();
+        spawnedItemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
+        firstChoiceIndex = index;
+        selectionStep = 2;
+      }
+      case 2 -> {
+        boolean isSameChoiceAsFirstChoice = itemFrame.equals(
+            spawnedItemFrames.get(firstChoiceIndex));
+        if (isSameChoiceAsFirstChoice) {
+          event.setCancelled(true);
+          return;
         }
-        case 2 -> {
-          if (itemFrame.equals(itemFrames.get(firstChoiceIndex))) {
-            event.setCancelled(true);
-            return;
-          }
-          itemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
-          secondChoiceIndex = index;
-          selectionStep = 1;
-          scoringProcess(player);
-        }
+        spawnedItemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
+        secondChoiceIndex = index;
+        selectionStep = 1;
+        scoringProcess(player);
       }
     }
 
-    if (itemFrames.stream().allMatch(frame -> frame.getItem().getType().equals(Material.AIR))) {
+    if (spawnedItemFrames.stream()
+        .allMatch(frame -> frame.getItem().getType().equals(Material.AIR))) {
       isGaming = false;
     }
 
@@ -129,23 +172,60 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   @EventHandler
-  public void onHangingBreak(HangingBreakEvent event) {
+  public void onBlockPlace(BlockPlaceEvent event) {
     if (isGaming) {
       event.setCancelled(true);
+    }
+  }
+
+  @EventHandler
+  public void onHangingBreak(HangingBreakEvent event) {
+    if (!isGaming) {
+      return;
+    }
+
+    if (event.getEntity() instanceof ItemFrame itemFrame) {
+      if (spawnedItemFrames.contains(itemFrame)) {
+        event.setCancelled(true);
+      }
     }
   }
 
   @EventHandler
   public void onEntityDamage(EntityDamageEvent event) {
-    if (isGaming) {
-      event.setCancelled(true);
+    if (!isGaming) {
+      return;
+    }
+
+    if (event.getEntity() instanceof ItemFrame itemFrame) {
+      if (spawnedItemFrames.contains(itemFrame)) {
+        event.setCancelled(true);
+      }
     }
   }
 
-  @EventHandler
-  public void onBlockPlace(BlockPlaceEvent event) {
-    if (isGaming) {
-      event.setCancelled(true);
+  /**
+   * 神経衰弱ゲームのランキングを1位から3位まで表示する。
+   * スコアの高さ(最大100)と、クリアタイムの短さを競う
+   * @param player コマンドを実行したプレイヤー
+   */
+  private void showRanking(Player player) {
+    try (SqlSession session = sqlSessionFactory.openSession()) {
+      PlayerScoreMapper mapper = session.getMapper(PlayerScoreMapper.class);
+      List<PlayerScore> playerScoreList = mapper.selectList();
+
+      player.sendMessage(
+          "順位 | プレイヤー名 | スコア | クリアタイム | 日時");
+      for (int i = 0; i < Math.min(3, playerScoreList.size()); i++) {
+        int playerRanking = i + 1;
+        player.sendMessage(
+            playerRanking + " | "
+                + playerScoreList.get(i).getPlayerName() + " | "
+                + playerScoreList.get(i).getScore() + " | "
+                + playerScoreList.get(i).getClearTime() + " | "
+                + playerScoreList.get(i).getRegisteredAt()
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+      }
     }
   }
 
@@ -153,7 +233,7 @@ public class Concentration extends CommandBaseProcess implements Listener {
    * 定数の初期化
    */
   private void constantsInitialization() {
-    itemFrames = new ArrayList<>();
+    spawnedItemFrames = new ArrayList<>();
     itemStacks = new ArrayList<>();
     gameTime = 60;
     score = 0;
@@ -163,12 +243,11 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * プレイヤーの向いてる方向をX,Z軸に丸めて取得する
+   * プレイヤーの向いている方向を4方向（±X, ±Z）に分類して文字列で返す。
    *
-   * @param playerDirectionYaw
-   * @return プレイヤーの向いてる方向をX, Z軸に丸めて返す
+   * @param playerDirectionYaw プレイヤーのヨー角（方向）
+   * @return プレイヤーの向きを表す文字列
    */
-  @NotNull
   private static String getPlayerDirection(float playerDirectionYaw) {
     String playerDirection;
     if (playerDirectionYaw > -135 && playerDirectionYaw <= -45) {
@@ -192,7 +271,7 @@ public class Concentration extends CommandBaseProcess implements Listener {
    * @param locationX       　プレイヤーが立っている座標X
    * @param locationY       　プレイヤーが立っている座標Y
    * @param locationZ       　プレイヤーが立っている座標Z
-   * @return true = NG、false = OK
+   * @return 設置不可ならtrue、設置可能ならfalse
    */
   private static boolean checkPlacementSpace(Player player, String playerDirection, World world,
       int locationX, int locationY, int locationZ) {
@@ -251,28 +330,28 @@ public class Concentration extends CommandBaseProcess implements Listener {
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.CLOCKWISE);
-            itemFrames.add(itemFrame);
+            spawnedItemFrames.add(itemFrame);
           }
           case "directionMinusX" -> {
             itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(-depth, 0, -width),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.COUNTER_CLOCKWISE);
-            itemFrames.add(itemFrame);
+            spawnedItemFrames.add(itemFrame);
           }
           case "directionPlusZ" -> {
             itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(width, 0, depth),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.FLIPPED);
-            itemFrames.add(itemFrame);
+            spawnedItemFrames.add(itemFrame);
           }
           case "directionMinusZ" -> {
             itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(-width, 0, -depth),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.NONE);
-            itemFrames.add(itemFrame);
+            spawnedItemFrames.add(itemFrame);
           }
         }
       }
@@ -280,7 +359,7 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * ペアとなるエンティティを10組作成しリストの中に入れ、中身をシャッフルする。
+   * 10種類のMaterialを2つずつ用意し、合計20個のアイテムをリストに追加してシャッフルする。
    */
   private void makeItemStacksList() {
     List<Material> materials = List.of(
@@ -297,13 +376,13 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * 神経衰弱ゲームのタイマー
+   * 神経衰弱ゲームの時間を60秒としてカウントダウンを開始し、10秒ごとに残り時間をプレイヤーに通知する。 時間切れまたは全てのペアを見つけた時点でゲームを終了し、結果を表示する。
    *
-   * @param player
+   * @param player 　コマンドを実行したプレイヤー
    */
   private void gameTimer(Player player) {
     Bukkit.getScheduler().runTaskTimer(main, Runnable -> {
-      if (gameTime >= 0 && isGaming) {
+      if (gameTime > 0 && isGaming) {
         gameTime = gameTime - 1;
         if (gameTime % 10 == 0) {
           player.sendMessage("残り" + gameTime + "秒!");
@@ -311,14 +390,22 @@ public class Concentration extends CommandBaseProcess implements Listener {
       } else {
         Runnable.cancel();
         isGaming = false;
-        itemFrames.forEach(Entity::remove);
-        itemFrames.clear();
+        spawnedItemFrames.forEach(Entity::remove);
+        spawnedItemFrames.clear();
+        int clearTime;
         if (gameTime > 0) {
+          clearTime = 60 - gameTime;
           player.sendTitle("ゲームクリア!",
-              "クリアタイム" + (60 - gameTime) + "秒", 10, 70, 20);
-        } else {
+              "クリアタイム" + clearTime + "秒", 10, 70, 20);
+          } else {
+          clearTime = gameTime;
           player.sendTitle("ゲームが終了しました!",
               " 合計 " + score + "点!", 10, 70, 20);
+        }
+        try (SqlSession session = sqlSessionFactory.openSession(true)) {
+          PlayerScoreMapper mapper = session.getMapper(PlayerScoreMapper.class);
+          mapper.insert(
+              new PlayerScore(player.getName(), score, clearTime));
         }
       }
     }, 0, 20);
@@ -332,25 +419,27 @@ public class Concentration extends CommandBaseProcess implements Listener {
       return;
     }
 
-    boolean isFirstChoiceAir = itemFrames.get(firstChoiceIndex).getItem().getType().equals(Material.AIR);
-    boolean isSecondChoiceAir = itemFrames.get(secondChoiceIndex).getItem().getType().equals(Material.AIR);
+    boolean isFirstChoiceAir = spawnedItemFrames.get(firstChoiceIndex).getItem().getType()
+        .equals(Material.AIR);
+    boolean isSecondChoiceAir = spawnedItemFrames.get(secondChoiceIndex).getItem().getType()
+        .equals(Material.AIR);
     if (!isFirstChoiceAir && !isSecondChoiceAir) {
-      itemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.CHEST));
-      itemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.CHEST));
+      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.CHEST));
+      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.CHEST));
     }
   }
 
   /**
    * プレイヤーが選んだ2つの額縁のアイテムがペアであるかを判定する。
    *
-   * @param player
+   * @param player 　コマンド実行したプレイヤー
    */
   private void scoringProcess(Player player) {
     if (itemStacks.get(firstChoiceIndex).equals(itemStacks.get(secondChoiceIndex))) {
       score += 10;
       player.sendMessage("当たり!現在" + score + "点!");
-      itemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.AIR));
-      itemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.AIR));
+      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.AIR));
+      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.AIR));
     } else {
       player.sendMessage("ハズレ!現在" + score + "点!");
     }

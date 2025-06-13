@@ -7,6 +7,9 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * コマンドを実行したい際に処理するプラグインの基底クラス
+ */
 public abstract class CommandBaseProcess implements CommandExecutor {
 
   @Override
