@@ -1,15 +1,9 @@
 package org.example.plugin.concentration.Command;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import org.apache.ibatis.io.Resources;
-import org.apache.ibatis.session.SqlSession;
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -30,9 +24,10 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.hanging.HangingBreakEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.ItemStack;
+import org.example.plugin.concentration.DBProcess;
 import org.example.plugin.concentration.DateBaseMapper.PlayerScore;
-import org.example.plugin.concentration.DateBaseMapper.PlayerScoreMapper;
 import org.example.plugin.concentration.Main;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * 神経衰弱ゲームのコマンドクラス。 プレイヤーが額縁を右クリックすることでカードをめくり、ペアを見つけるゲーム。
@@ -47,6 +42,8 @@ public class Concentration extends CommandBaseProcess implements Listener {
     this.main = main;
   }
 
+  static int GAME_TIME = 60;
+
   boolean isGaming;
   ArrayList<ItemFrame> spawnedItemFrames;
   ArrayList<Material> itemStacks;
@@ -56,17 +53,7 @@ public class Concentration extends CommandBaseProcess implements Listener {
   int firstChoiceIndex;
   int secondChoiceIndex;
 
-  InputStream inputStream;
-
-  {
-    try {
-      inputStream = Resources.getResourceAsStream("mybatis-config.xml");
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-  }
-
-  SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(inputStream);
+  DBProcess dbProcess = new DBProcess();
 
   @Override
   public boolean onPlayerCommandProcess(Player player, Command command, String s,
@@ -84,33 +71,28 @@ public class Concentration extends CommandBaseProcess implements Listener {
       return false;
     }
 
-    constantsInitialization();
+    gameStatusInitialization();
 
-    World world = player.getWorld();
-    int locationX = player.getLocation().getBlockX();
-    int locationY = player.getLocation().getBlockY();
-    int locationZ = player.getLocation().getBlockZ();
-    float playerDirectionYaw = player.getLocation().getYaw();
+    PlayerLocationInfo playerLocationInfo = getPlayerLocationInfo(player);
 
-    String playerDirection = getPlayerDirection(playerDirectionYaw);
-
-    if (checkPlacementSpace(player, playerDirection, world, locationX, locationY, locationZ)) {
+    if (checkPlacementSpace(player, playerLocationInfo)) {
       return false;
     }
 
-    spawnItemFrames(world, locationX, locationY, locationZ, playerDirection);
+    spawnItemFrames(playerLocationInfo.world(), playerLocationInfo.locationX(),
+        playerLocationInfo.locationY(), playerLocationInfo.locationZ(),
+        playerLocationInfo.playerDirection());
 
     makeItemStacksList();
 
     isGaming = true;
 
-    player.sendMessage("ゲームスタート!額縁を右クリックしてペアを見つけよう!");
+    player.sendTitle("ゲームスタート!", "額縁を右クリックしてペアを見つけよう!",10, 70, 20);
 
     gameTimer(player);
 
     return true;
   }
-
 
   @Override
   public boolean onEtcCommandProcess(CommandSender commandSender, Command command, String s,
@@ -205,37 +187,34 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * 神経衰弱ゲームのランキングを1位から3位まで表示する。
-   * スコアの高さ(最大100)と、クリアタイムの短さを競う
+   * 神経衰弱ゲームのランキングを1位から3位まで表示する。 スコアの高さ(最大100)と、クリアタイムの短さを競う
+   *
    * @param player コマンドを実行したプレイヤー
    */
   private void showRanking(Player player) {
-    try (SqlSession session = sqlSessionFactory.openSession()) {
-      PlayerScoreMapper mapper = session.getMapper(PlayerScoreMapper.class);
-      List<PlayerScore> playerScoreList = mapper.selectList();
+    List<PlayerScore> playerScoreList = dbProcess.selectList();
 
+    player.sendMessage("順位 | プレイヤー名 | スコア | クリアタイム | 日時");
+    for (int i = 0; i < Math.min(3, playerScoreList.size()); i++) {
+      int playerRanking = i + 1;
       player.sendMessage(
-          "順位 | プレイヤー名 | スコア | クリアタイム | 日時");
-      for (int i = 0; i < Math.min(3, playerScoreList.size()); i++) {
-        int playerRanking = i + 1;
-        player.sendMessage(
-            playerRanking + " | "
-                + playerScoreList.get(i).getPlayerName() + " | "
-                + playerScoreList.get(i).getScore() + " | "
-                + playerScoreList.get(i).getClearTime() + " | "
-                + playerScoreList.get(i).getRegisteredAt()
-                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-      }
+          playerRanking + " | "
+              + playerScoreList.get(i).getPlayerName() + " | "
+              + playerScoreList.get(i).getScore() + " | "
+              + playerScoreList.get(i).getClearTime() + " | "
+              + playerScoreList.get(i).getRegisteredAt()
+              .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
     }
+
   }
 
   /**
    * 定数の初期化
    */
-  private void constantsInitialization() {
+  private void gameStatusInitialization() {
     spawnedItemFrames = new ArrayList<>();
     itemStacks = new ArrayList<>();
-    gameTime = 60;
+    gameTime = GAME_TIME;
     score = 0;
     selectionStep = 1;
     firstChoiceIndex = -1;
@@ -243,13 +222,21 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   /**
-   * プレイヤーの向いている方向を4方向（±X, ±Z）に分類して文字列で返す。
+   * プレイヤーの位置と向いている方向を取得する プレイヤーの方向は±X軸または±Z軸方向に丸める
    *
-   * @param playerDirectionYaw プレイヤーのヨー角（方向）
-   * @return プレイヤーの向きを表す文字列
+   * @param player 　コマンド実行したプレイヤー
+   * @return プレイヤーの位置と向いている方向
    */
-  private static String getPlayerDirection(float playerDirectionYaw) {
+  @NotNull
+  private static PlayerLocationInfo getPlayerLocationInfo(Player player) {
+    World world = player.getWorld();
+    int locationX = player.getLocation().getBlockX();
+    int locationY = player.getLocation().getBlockY();
+    int locationZ = player.getLocation().getBlockZ();
+
+    float playerDirectionYaw = player.getLocation().getYaw();
     String playerDirection;
+
     if (playerDirectionYaw > -135 && playerDirectionYaw <= -45) {
       playerDirection = "directionPlusX";
     } else if (playerDirectionYaw > 45 && playerDirectionYaw <= 135) {
@@ -259,54 +246,75 @@ public class Concentration extends CommandBaseProcess implements Listener {
     } else {
       playerDirection = "directionMinusZ";
     }
-    return playerDirection;
+    return new PlayerLocationInfo(world, locationX, locationY, locationZ, playerDirection);
+  }
+
+  private record PlayerLocationInfo(World world, int locationX, int locationY, int locationZ,
+                                    String playerDirection) {
+
   }
 
   /**
    * プレイヤー前方の床の幅5ブロック×奥行き4ブロックに額縁を設置可能かを判定する
    *
-   * @param player          コマンドを実行したプレイヤー
-   * @param playerDirection プレイヤーの向いている方向
-   * @param world           コマンドを実行したプレイヤーのいるワールド
-   * @param locationX       　プレイヤーが立っている座標X
-   * @param locationY       　プレイヤーが立っている座標Y
-   * @param locationZ       　プレイヤーが立っている座標Z
+   * @param player コマンドを実行したプレイヤー
+   * @param playerLocationInfo プレイヤーの座標と向きをまとめた情報
    * @return 設置不可ならtrue、設置可能ならfalse
    */
-  private static boolean checkPlacementSpace(Player player, String playerDirection, World world,
-      int locationX, int locationY, int locationZ) {
+  private static boolean checkPlacementSpace(Player player, PlayerLocationInfo playerLocationInfo) {
     for (int width = -2; width <= 2; width++) {
-      for (int height = -1; height <= 2; height++) {
-        for (int depth = 1; depth <= 4; depth++) {
-          Material blockType = Material.AIR;
-          switch (playerDirection) {
-            case "directionPlusX" ->
-                blockType = world.getBlockAt(locationX + depth, locationY + height,
-                    locationZ + width).getType();
-            case "directionMinusX" ->
-                blockType = world.getBlockAt(locationX - depth, locationY + height,
-                    locationZ - width).getType();
-            case "directionPlusZ" ->
-                blockType = world.getBlockAt(locationX + width, locationY + height,
-
-                    locationZ + depth).getType();
-            case "directionMinusZ" ->
-                blockType = world.getBlockAt(locationX - width, locationY + height,
-                    locationZ - depth).getType();
-          }
-          if (height != -1 && blockType != Material.AIR) {
+      for (int depth = 1; depth <= 4; depth++) {
+        for (int height = 0; height <= 1; height++) {
+          Material blockType = getBlockType(playerLocationInfo, depth, height, width);
+          if (blockType != Material.AIR) {
             player.sendMessage(
                 "前方の横5*奥行き4ブロックに空きスペースが必要です。移動するか、ブロックを取り除いてください。");
-            return true;
-          } else if (height == -1 && !blockType.isSolid()) {
-            player.sendMessage(
-                "前方の横5*奥行き4ブロックの床にブロックがが必要です。移動するか、ブロックを設置してください。");
             return true;
           }
         }
       }
     }
+
+    for (int width = -2; width <= 2; width++) {
+      for (int depth = 1; depth <= 4; depth++) {
+        Material blockType;
+          blockType = getBlockType(playerLocationInfo, depth, -1, width);
+          if (!blockType.isSolid()) {
+            player.sendMessage(
+                "前方の横5*奥行き4ブロックの床にブロックが必要です。移動するか、ブロックを設置してください。");
+            return true;
+          }
+      }
+    }
+
     return false;
+  }
+
+  /**
+   *プレイヤーの向きと指定された相対座標に基づいてブロックの種類を取得する
+   * @param playerLocationInfo プレイヤーの座標と向きをまとめた情報
+   * @param depth プレイヤーの前方方向の距離
+   * @param height プレイヤーの上下方向の距離
+   * @param width プレイヤーの左右方向の距離
+   * @return 対象ブロックのMaterial
+   */
+  private static Material getBlockType(PlayerLocationInfo playerLocationInfo, int depth, int height, int width) {
+    Material blockType=Material.AIR;
+    switch (playerLocationInfo.playerDirection) {
+      case "directionPlusX" ->
+          blockType = playerLocationInfo.world.getBlockAt(playerLocationInfo.locationX + depth, playerLocationInfo.locationY + height,
+              playerLocationInfo.locationZ + width).getType();
+      case "directionMinusX" ->
+          blockType = playerLocationInfo.world.getBlockAt(playerLocationInfo.locationX - depth, playerLocationInfo.locationY + height,
+              playerLocationInfo.locationZ - width).getType();
+      case "directionPlusZ" ->
+          blockType = playerLocationInfo.world.getBlockAt(playerLocationInfo.locationX + width, playerLocationInfo.locationY + height,
+              playerLocationInfo.locationZ + depth).getType();
+      case "directionMinusZ" ->
+          blockType = playerLocationInfo.world.getBlockAt(playerLocationInfo.locationX - width, playerLocationInfo.locationY + height,
+              playerLocationInfo.locationZ - depth).getType();
+    }
+    return blockType;
   }
 
   /**
@@ -363,9 +371,9 @@ public class Concentration extends CommandBaseProcess implements Listener {
    */
   private void makeItemStacksList() {
     List<Material> materials = List.of(
-        Material.GOLDEN_AXE, Material.DIAMOND, Material.APPLE, Material.BOOK,
-        Material.BREAD, Material.BONE, Material.COAL, Material.EMERALD,
-        Material.ENDER_PEARL, Material.GOLD_INGOT);
+        Material.GOLDEN_AXE, org.bukkit.Material.DIAMOND, org.bukkit.Material.APPLE, org.bukkit.Material.BOOK,
+        Material.BREAD, org.bukkit.Material.BONE, org.bukkit.Material.COAL, org.bukkit.Material.EMERALD,
+        Material.ENDER_PEARL, org.bukkit.Material.GOLD_INGOT);
 
     for (Material material : materials) {
       itemStacks.add(material);
@@ -397,16 +405,12 @@ public class Concentration extends CommandBaseProcess implements Listener {
           clearTime = 60 - gameTime;
           player.sendTitle("ゲームクリア!",
               "クリアタイム" + clearTime + "秒", 10, 70, 20);
-          } else {
+        } else {
           clearTime = gameTime;
           player.sendTitle("ゲームが終了しました!",
               " 合計 " + score + "点!", 10, 70, 20);
         }
-        try (SqlSession session = sqlSessionFactory.openSession(true)) {
-          PlayerScoreMapper mapper = session.getMapper(PlayerScoreMapper.class);
-          mapper.insert(
-              new PlayerScore(player.getName(), score, clearTime));
-        }
+        dbProcess.insertToDB(new PlayerScore(player.getName(), score, clearTime));
       }
     }, 0, 20);
   }
@@ -424,8 +428,8 @@ public class Concentration extends CommandBaseProcess implements Listener {
     boolean isSecondChoiceAir = spawnedItemFrames.get(secondChoiceIndex).getItem().getType()
         .equals(Material.AIR);
     if (!isFirstChoiceAir && !isSecondChoiceAir) {
-      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.CHEST));
-      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.CHEST));
+      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(org.bukkit.Material.CHEST));
+      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(org.bukkit.Material.CHEST));
     }
   }
 
@@ -438,8 +442,8 @@ public class Concentration extends CommandBaseProcess implements Listener {
     if (itemStacks.get(firstChoiceIndex).equals(itemStacks.get(secondChoiceIndex))) {
       score += 10;
       player.sendMessage("当たり!現在" + score + "点!");
-      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(Material.AIR));
-      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(Material.AIR));
+      spawnedItemFrames.get(firstChoiceIndex).setItem(new ItemStack(org.bukkit.Material.AIR));
+      spawnedItemFrames.get(secondChoiceIndex).setItem(new ItemStack(org.bukkit.Material.AIR));
     } else {
       player.sendMessage("ハズレ!現在" + score + "点!");
     }
