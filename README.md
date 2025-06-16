@@ -8,17 +8,17 @@
 
 ## 工夫した点
 
-  ・**直感的なゲーム体験**： 額縁の裏面にチェスト、表面にアイテムを表示し、分かりやすさを重視
+  ・**直感的なゲーム体験**： 額縁の裏面をチェスト、表面をアイテムとして表示し、分かりやすさを重視
 
   ・**向きに応じた盤面生成**： プレイヤーの視線方向に応じて盤面（5×4の額縁）が出現
 
   ・**ランキング表示機能**： MySQLに記録されたスコアから上位3名を表示するランキングを実装
 
-  ・**可読性を意識したコード**： 他人が読んでも意図が伝わるよう丁寧にコーディング
+  ・**可読性を意識したコード**： 他人が読んでも意図が伝わるようにコーディング
 
-## プレイ動画
+## プレイデモ動画
 
-https://1drv.ms/v/c/1269b20bd2ff22a1/ETJVVkR3MPlAoe6pCeMBsYYBtIgIrNhZy58B5f7uosoNGw?e=eOhk7X
+https://github.com/user-attachments/assets/3aa0285a-f98f-4cba-bc71-62659e292fb6
 
 ## ゲームの概要
   プレイヤーが額縁を右クリックすることでカードをめくり、ペアを見つけるミニゲームです。
@@ -59,9 +59,9 @@ https://1drv.ms/v/c/1269b20bd2ff22a1/ETJVVkR3MPlAoe6pCeMBsYYBtIgIrNhZy58B5f7uoso
 
 ８. コマンド（　/concentration list　）を入力することでランキング上位３位まで表示されます
 
-## スコア確認動画
+## スコア確認デモ動画
 
-https://1drv.ms/v/c/1269b20bd2ff22a1/EfKTABhMaPNHt_pM3T2MMY8BGX8jJJFzn9Vs7XDZTpLSEA?e=CVNzvM
+https://github.com/user-attachments/assets/cf4c1423-ff9b-49ba-aaee-1ebca75a53d8
 
 ## 対応バージョン
 
