@@ -43,6 +43,8 @@ public class Concentration extends CommandBaseProcess implements Listener {
   }
 
   static int GAME_TIME = 60;
+  static int HALF_WIDTH =2;
+  static int DEPTH =4;
 
   boolean isGaming;
   ArrayList<ItemFrame> spawnedItemFrames;
@@ -75,13 +77,11 @@ public class Concentration extends CommandBaseProcess implements Listener {
 
     PlayerLocationInfo playerLocationInfo = getPlayerLocationInfo(player);
 
-    if (checkPlacementSpace(player, playerLocationInfo)) {
+    if (!checkPlacementSpace(player, playerLocationInfo)) {
       return false;
     }
 
-    spawnItemFrames(playerLocationInfo.world(), playerLocationInfo.locationX(),
-        playerLocationInfo.locationY(), playerLocationInfo.locationZ(),
-        playerLocationInfo.playerDirection());
+    spawnItemFrames(playerLocationInfo);
 
     makeItemStacksList();
 
@@ -259,35 +259,35 @@ public class Concentration extends CommandBaseProcess implements Listener {
    *
    * @param player コマンドを実行したプレイヤー
    * @param playerLocationInfo プレイヤーの座標と向きをまとめた情報
-   * @return 設置不可ならtrue、設置可能ならfalse
+   * @return 設置可能ならtrue,設置不可ならfalse
    */
   private static boolean checkPlacementSpace(Player player, PlayerLocationInfo playerLocationInfo) {
-    for (int width = -2; width <= 2; width++) {
-      for (int depth = 1; depth <= 4; depth++) {
+    for (int width = -HALF_WIDTH; width <= HALF_WIDTH; width++) {
+      for (int depth = 1; depth <= DEPTH; depth++) {
         for (int height = 0; height <= 1; height++) {
           Material blockType = getBlockType(playerLocationInfo, depth, height, width);
           if (blockType != Material.AIR) {
             player.sendMessage(
                 "前方の横5*奥行き4ブロックに空きスペースが必要です。移動するか、ブロックを取り除いてください。");
-            return true;
+            return false;
           }
         }
       }
     }
 
-    for (int width = -2; width <= 2; width++) {
-      for (int depth = 1; depth <= 4; depth++) {
+    for (int width = -HALF_WIDTH; width <= HALF_WIDTH; width++) {
+      for (int depth = 1; depth <= DEPTH; depth++) {
         Material blockType;
           blockType = getBlockType(playerLocationInfo, depth, -1, width);
           if (!blockType.isSolid()) {
             player.sendMessage(
                 "前方の横5*奥行き4ブロックの床にブロックが必要です。移動するか、ブロックを設置してください。");
-            return true;
+            return false;
           }
       }
     }
 
-    return false;
+    return true;
   }
 
   /**
@@ -320,42 +320,37 @@ public class Concentration extends CommandBaseProcess implements Listener {
   /**
    * プレイヤー前方の床の幅5ブロック×奥行き4ブロックに額縁を設置し、チェストをセットする。
    *
-   * @param world           プレイヤーがコマンドを実行したワールド
-   * @param locationX       プレイヤーが立っている座標X
-   * @param locationY       プレイヤーが立っている座標Y
-   * @param locationZ       プレイヤーが立っている座標Z
-   * @param playerDirection 　プレイヤーの向いている方向
+   * @param playerLocationInfo プレイヤーの座標と向きをまとめた情報
    */
-  private void spawnItemFrames(World world, int locationX, int locationY, int locationZ,
-      String playerDirection) {
-    Location location = new Location(world, locationX, locationY, locationZ);
-    for (int width = -2; width <= 2; width++) {
-      for (int depth = 1; depth <= 4; depth++) {
+  private void spawnItemFrames(PlayerLocationInfo playerLocationInfo) {
+    Location location = new Location(playerLocationInfo.world, playerLocationInfo.locationX, playerLocationInfo.locationY, playerLocationInfo.locationZ);
+    for (int width = -HALF_WIDTH; width <= HALF_WIDTH; width++) {
+      for (int depth = 1; depth <= DEPTH; depth++) {
         ItemFrame itemFrame;
-        switch (playerDirection) {
+        switch (playerLocationInfo.playerDirection) {
           case "directionPlusX" -> {
-            itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(depth, 0, width),
+            itemFrame = ((ItemFrame) playerLocationInfo.world.spawnEntity(location.clone().add(depth, 0, width),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.CLOCKWISE);
             spawnedItemFrames.add(itemFrame);
           }
           case "directionMinusX" -> {
-            itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(-depth, 0, -width),
+            itemFrame = ((ItemFrame) playerLocationInfo.world.spawnEntity(location.clone().add(-depth, 0, -width),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.COUNTER_CLOCKWISE);
             spawnedItemFrames.add(itemFrame);
           }
           case "directionPlusZ" -> {
-            itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(width, 0, depth),
+            itemFrame = ((ItemFrame) playerLocationInfo.world.spawnEntity(location.clone().add(width, 0, depth),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.FLIPPED);
             spawnedItemFrames.add(itemFrame);
           }
           case "directionMinusZ" -> {
-            itemFrame = ((ItemFrame) world.spawnEntity(location.clone().add(-width, 0, -depth),
+            itemFrame = ((ItemFrame) playerLocationInfo.world.spawnEntity(location.clone().add(-width, 0, -depth),
                 EntityType.ITEM_FRAME));
             itemFrame.setItem(new ItemStack(Material.CHEST));
             itemFrame.setRotation(Rotation.NONE);
@@ -400,13 +395,14 @@ public class Concentration extends CommandBaseProcess implements Listener {
         isGaming = false;
         spawnedItemFrames.forEach(Entity::remove);
         spawnedItemFrames.clear();
+
         int clearTime;
         if (gameTime > 0) {
           clearTime = 60 - gameTime;
           player.sendTitle("ゲームクリア!",
               "クリアタイム" + clearTime + "秒", 10, 70, 20);
         } else {
-          clearTime = gameTime;
+          clearTime = GAME_TIME;
           player.sendTitle("ゲームが終了しました!",
               " 合計 " + score + "点!", 10, 70, 20);
         }
