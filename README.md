@@ -18,7 +18,7 @@
 
 ## プレイ動画
 
-
+https://1drv.ms/v/c/1269b20bd2ff22a1/ETJVVkR3MPlAoe6pCeMBsYYBtIgIrNhZy58B5f7uosoNGw?e=eOhk7X
 
 ## ゲームの概要
   プレイヤーが額縁を右クリックすることでカードをめくり、ペアを見つけるミニゲームです。
@@ -60,6 +60,8 @@
 ８. コマンド（　/concentration list　）を入力することでランキング上位３位まで表示されます
 
 ## スコア確認動画
+
+https://1drv.ms/v/c/1269b20bd2ff22a1/EfKTABhMaPNHt_pM3T2MMY8BGX8jJJFzn9Vs7XDZTpLSEA?e=CVNzvM
 
 ## 対応バージョン
 
