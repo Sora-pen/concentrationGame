@@ -118,12 +118,14 @@ public class Concentration extends CommandBaseProcess implements Listener {
 
     int index = spawnedItemFrames.indexOf(itemFrame);
     switch (selectionStep) {
+      // 1回目の選択処理：アイテムを表示し、次のステップへ
       case 1 -> {
         resetItemFrames();
         spawnedItemFrames.get(index).setItem(new ItemStack(itemStacks.get(index)));
         firstChoiceIndex = index;
         selectionStep = 2;
       }
+      // 2回目の選択処理：同じものを選んでたら無効、それ以外なら評価処理
       case 2 -> {
         boolean isSameChoiceAsFirstChoice = itemFrame.equals(
             spawnedItemFrames.get(firstChoiceIndex));
